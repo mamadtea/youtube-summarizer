@@ -5,47 +5,31 @@ from src.database import users
 from src.bot.keyboards import settings_keyboard
 
 
-# ==========================================
-# START
-# ==========================================
-
-async def start(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
 
-    users.create_if_not_exists(
+    await users.create_if_not_exists(
         user.id,
         user.first_name
     )
 
-    text = f"""
-👋 سلام {user.first_name}
-
-به ربات خلاصه‌ساز هوشمند یوتیوب خوش آمدید.
-
-━━━━━━━━━━━━━━━━━━
-
-🎬 فقط لینک ویدیو را ارسال کنید.
-
-ربات به صورت خودکار:
-
-✅ اطلاعات ویدیو را دریافت می‌کند
-✅ زیرنویس را استخراج می‌کند
-✅ با هوش مصنوعی تحلیل می‌کند
-✅ خلاصه کامل تولید می‌کند
-
-━━━━━━━━━━━━━━━━━━
-
-دستورات:
-
-/settings
-/history
-/me
-/help
-"""
+    text = (
+        f"👋 سلام {user.first_name}\n\n"
+        "به ربات خلاصه‌ساز هوشمند یوتیوب خوش آمدید.\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        "🎬 فقط لینک ویدیو را ارسال کنید.\n\n"
+        "ربات به صورت خودکار:\n"
+        "✅ اطلاعات ویدیو را دریافت می‌کند\n"
+        "✅ زیرنویس را استخراج می‌کند\n"
+        "✅ با هوش مصنوعی تحلیل می‌کند\n"
+        "✅ خلاصه کامل تولید می‌کند\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        "دستورات:\n"
+        "/settings - تنظیمات\n"
+        "/history - تاریخچه\n"
+        "/me - پروفایل\n"
+        "/help - راهنما"
+    )
 
     await update.message.reply_text(
         text,
@@ -53,84 +37,39 @@ async def start(
     )
 
 
-# ==========================================
-# HELP
-# ==========================================
-
-async def help_command(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
-    text = """
-📚 راهنما
-
-فقط لینک YouTube ارسال کنید.
-
-مثال:
-
-https://youtu.be/xxxx
-
-یا
-
-https://youtube.com/watch?v=xxxx
-"""
-
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    text = (
+        "📚 راهنما\n\n"
+        "فقط لینک YouTube ارسال کنید.\n\n"
+        "مثال:\n"
+        "https://youtu.be/xxxx\n\n"
+        "یا\n\n"
+        "https://youtube.com/watch?v=xxxx"
+    )
     await update.message.reply_text(text)
 
 
-# ==========================================
-# PROFILE
-# ==========================================
+async def me_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    user_data = await users.get_user(user_id)
 
-async def me_command(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
-    user = users.get_user(
-        update.effective_user.id
+    text = (
+        "👤 پروفایل\n\n"
+        f"🌍 زبان:\n{user_data['language']}\n\n"
+        f"📝 نوع خلاصه:\n{user_data['summary_type']}\n\n"
+        f"📊 تعداد درخواست:\n{user_data['requests']}"
     )
 
-    text = f"""
-👤 پروفایل
-
-🌍 زبان:
-{user["language"]}
-
-📝 نوع خلاصه:
-{user["summary_type"]}
-
-📊 تعداد درخواست:
-{user["requests"]}
-"""
-
     await update.message.reply_text(text)
 
 
-# ==========================================
-# HISTORY
-# ==========================================
-
-async def history_command(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
+async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "📚 برای مشاهده تاریخچه از دکمه History داخل Settings استفاده کنید."
     )
 
 
-# ==========================================
-# SETTINGS
-# ==========================================
-
-async def settings_command(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
+async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "⚙ تنظیمات",
         reply_markup=settings_keyboard()

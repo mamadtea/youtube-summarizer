@@ -1,2 +1,11 @@
 python-telegram-bot
 python-dotenv
+aiosqlite
+reportlab
+arabic_reshaper
+python-bidi
+httpx
+pydantic
+openai
+yt-dlp
+youtube-transcript-api

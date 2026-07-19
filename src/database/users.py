@@ -1,322 +1,114 @@
-from src.database.sqlite import Database
+import logging
+from typing import Dict, Any, Optional
+
+import aiosqlite
+
+logger = logging.getLogger("youtube_summarizer")
+
+DB_PATH = "data/bot.db"
 
 
 class UserSettings:
-    """
-    Manage Telegram user settings.
-    """
+    def __init__(self, db_path: str = DB_PATH):
+        self.db_path = db_path
+        self._db: Optional[aiosqlite.Connection] = None
 
-    def __init__(self):
-        self.db = Database()
-
-    # =====================================
-    # CREATE USER
-    # =====================================
-
-    def create_user(
-        self,
-        user_id: int
-    ):
-
-        cursor = self.db.connection.cursor()
-
-        cursor.execute(
-            """
-            INSERT OR IGNORE INTO users
-            (
-                user_id
+    async def init(self) -> None:
+        self._db = await aiosqlite.connect(self.db_path)
+        await self._db.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                user_id INTEGER PRIMARY KEY,
+                first_name TEXT DEFAULT '',
+                language TEXT DEFAULT 'Persian',
+                summary_type TEXT DEFAULT 'detailed',
+                requests INTEGER DEFAULT 0
             )
-            VALUES
-            (?)
-            """,
-            (
-                user_id,
-            )
+        """)
+        await self._db.commit()
+        logger.info("User database initialized.")
+
+    async def close(self) -> None:
+        if self._db:
+            await self._db.close()
+
+    async def create_user(self, user_id: int, first_name: str = "") -> None:
+        await self._db.execute(
+            "INSERT OR IGNORE INTO users (user_id, first_name) VALUES (?, ?)",
+            (user_id, first_name)
         )
+        await self._db.commit()
 
-        self.db.connection.commit()
-
-    # =====================================
-    # GET USER
-    # =====================================
-
-    def get_user(
-        self,
-        user_id: int
-    ):
-
-        self.create_user(
-            user_id
-        )
-
-        cursor = self.db.connection.cursor()
-
-        cursor.execute(
-            """
-            SELECT
-                language,
-                summary_type,
-                requests
-
-            FROM users
-
-            WHERE user_id = ?
-            """,
-            (
-                user_id,
-            )
-        )
-
-        result = cursor.fetchone()
+    async def get_user(self, user_id: int) -> Dict[str, Any]:
+        async with self._db.execute(
+            "SELECT language, summary_type, requests FROM users WHERE user_id = ?",
+            (user_id,)
+        ) as cursor:
+            result = await cursor.fetchone()
 
         if result is None:
-
+            await self.create_user(user_id)
             return {
-
                 "language": "Persian",
-
                 "summary_type": "detailed",
-
                 "requests": 0
-
             }
 
         return {
-
             "language": result[0],
-
             "summary_type": result[1],
-
             "requests": result[2]
-
         }
 
-    # =====================================
-    # UPDATE LANGUAGE
-    # =====================================
-
-    def update_language(
-        self,
-        user_id: int,
-        language: str
-    ):
-
-        self.create_user(
-            user_id
+    async def update_language(self, user_id: int, language: str) -> None:
+        await self.create_user(user_id)
+        await self._db.execute(
+            "UPDATE users SET language = ? WHERE user_id = ?",
+            (language, user_id)
         )
+        await self._db.commit()
 
-        cursor = self.db.connection.cursor()
-
-        cursor.execute(
-            """
-            UPDATE users
-
-            SET language = ?
-
-            WHERE user_id = ?
-            """,
-            (
-                language,
-                user_id
-            )
+    async def update_summary_type(self, user_id: int, summary_type: str) -> None:
+        await self.create_user(user_id)
+        await self._db.execute(
+            "UPDATE users SET summary_type = ? WHERE user_id = ?",
+            (summary_type, user_id)
         )
+        await self._db.commit()
 
-        self.db.connection.commit()
-
-    # =====================================
-    # UPDATE SUMMARY TYPE
-    # =====================================
-
-    def update_summary_type(
-        self,
-        user_id: int,
-        summary_type: str
-    ):
-
-        self.create_user(
-            user_id
+    async def increase_requests(self, user_id: int) -> None:
+        await self.create_user(user_id)
+        await self._db.execute(
+            "UPDATE users SET requests = requests + 1 WHERE user_id = ?",
+            (user_id,)
         )
+        await self._db.commit()
 
-        cursor = self.db.connection.cursor()
+    async def create_if_not_exists(self, user_id: int, first_name: str = "") -> None:
+        await self.create_user(user_id, first_name)
 
-        cursor.execute(
-            """
-            UPDATE users
+    async def set_language(self, user_id: int, language: str) -> None:
+        await self.update_language(user_id, language)
 
-            SET summary_type = ?
+    async def set_summary_type(self, user_id: int, summary_type: str) -> None:
+        await self.update_summary_type(user_id, summary_type)
 
-            WHERE user_id = ?
-            """,
-            (
-                summary_type,
-                user_id
-            )
-        )
-
-        self.db.connection.commit()
-
-    # =====================================
-    # INCREASE REQUESTS
-    # =====================================
-
-    def increase_requests(
-        self,
-        user_id: int
-    ):
-
-        self.create_user(
-            user_id
-        )
-
-        cursor = self.db.connection.cursor()
-
-        cursor.execute(
-            """
-            UPDATE users
-
-            SET requests = requests + 1
-
-            WHERE user_id = ?
-            """,
-            (
-                user_id,
-            )
-        )
-
-        self.db.connection.commit()
-
-    # =====================================
-    # GET REQUESTS
-    # =====================================
-
-    def get_requests(
-        self,
-        user_id: int
-    ):
-
-        self.create_user(
-            user_id
-        )
-
-        cursor = self.db.connection.cursor()
-
-        cursor.execute(
-            """
-            SELECT requests
-
-            FROM users
-
-            WHERE user_id = ?
-            """,
-            (
-                user_id,
-            )
-        )
-
-        result = cursor.fetchone()
-
-        if result is None:
-
-            return 0
-
-        return result[0]
-    # =====================================
-# Singleton
-# =====================================
 
 _users = UserSettings()
 
+async def init() -> None:
+    await _users.init()
+    
+async def create_if_not_exists(user_id: int, first_name: str = "") -> None:
+    await _users.create_if_not_exists(user_id, first_name)
 
-def create_if_not_exists(
-    user_id: int,
-    first_name: str = ""
-):
-    _users.create_user(user_id)
+async def get_user(user_id: int) -> Dict[str, Any]:
+    return await _users.get_user(user_id)
 
+async def increase_requests(user_id: int) -> None:
+    await _users.increase_requests(user_id)
 
-def get_user(
-    user_id: int
-):
-    return _users.get_user(user_id)
+async def set_language(user_id: int, language: str) -> None:
+    await _users.set_language(user_id, language)
 
-
-def update_language(
-    user_id: int,
-    language: str
-):
-    _users.update_language(
-        user_id,
-        language
-    )
-
-
-def update_summary_type(
-    user_id: int,
-    summary_type: str
-):
-    _users.update_summary_type(
-        user_id,
-        summary_type
-    )
-
-
-def increase_requests(
-    user_id: int
-):
-    _users.increase_requests(
-        user_id
-    )
-
-
-def get_requests(
-    user_id: int
-):
-    return _users.get_requests(
-        user_id
-    )
-    # =====================================
-# Compatibility API
-# =====================================
-
-def set_language(
-    user_id: int,
-    language: str
-):
-    _users.update_language(
-        user_id,
-        language
-    )
-
-
-def get_language(
-    user_id: int
-):
-    return _users.get_user(
-        user_id
-    )["language"]
-
-
-def set_summary_type(
-    user_id: int,
-    summary_type: str
-):
-    _users.update_summary_type(
-        user_id,
-        summary_type
-    )
-
-
-def get_summary_type(
-    user_id: int
-):
-    return _users.get_user(
-        user_id
-    )["summary_type"]
-
-
-def increment_requests(
-    user_id: int
-):
-    _users.increase_requests(
-        user_id
-    )
+async def set_summary_type(user_id: int, summary_type: str) -> None:
+    await _users.set_summary_type(user_id, summary_type)

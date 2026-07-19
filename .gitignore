@@ -1,1 +1,18 @@
+# Virtual Environment
+.venv/
+venv/
+env/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Database files (که توسط ربات ساخته شده‌اند)
+data/
+*.db
+
+# Temp export files
+temp/
+
+# Environment variables (توکن ربات و API_KEY)
 .env

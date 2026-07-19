@@ -5,390 +5,161 @@ from src.services.ai.chunker import TranscriptChunker
 from src.services.ai.openrouter_client import OpenRouterClient
 from src.services.ai.parser import SummaryParser
 
-
-logger = logging.getLogger(
-    "youtube_summarizer"
-)
+logger = logging.getLogger("youtube_summarizer")
 
 
 class MapReduceSummarizer:
-    """
-    Summarize long transcripts using Map-Reduce strategy.
-    """
-
     def __init__(self):
-
         self.chunker = TranscriptChunker()
-
         self.client = OpenRouterClient()
-
         self.parser = SummaryParser()
 
-
+    def _get_style_instruction(self, summary_type: str) -> str:
+        """Returns specific prompt instructions based on the summary type."""
+        if summary_type == "brief":
+            return """
+STYLE: BRIEF (کوتاه)
+- Write a very concise and to-the-point summary (1-2 short paragraphs).
+- Only list the 2 or 3 MOST CRITICAL key points.
+- Keep the terms and conclusion very brief.
+"""
+        elif summary_type == "educational":
+            return """
+STYLE: EDUCATIONAL (آموزشی)
+- Structure the summary like a tutorial or a lesson.
+- Explain concepts simply, as if teaching a beginner.
+- In "terms", include technical words and briefly explain them (e.g., "API: A way for software to communicate").
+- In "conclusion", summarize what the user should have learned (Learning Outcomes).
+"""
+        else:  # complete (default)
+            return """
+STYLE: COMPLETE (کامل)
+- Write a comprehensive, detailed, and thorough summary covering all aspects of the video.
+- List ALL important key points (at least 5-7 points).
+- Ensure no significant detail from the video is missed.
+- Provide a deep and insightful final conclusion.
+"""
 
     def summarize(
         self,
         transcript: str,
         language: str = "Persian",
-        summary_type: str = "detailed"
+        summary_type: str = "complete"
     ) -> dict:
 
+        error_result = {
+            "summary": "",
+            "key_points": [],
+            "terms": [],
+            "conclusion": ""
+        }
 
-        # ==========================
-        # MAP PHASE
-        # ==========================
-
-        chunks = self.chunker.split(
-            transcript
-        )
-
-
+        chunks = self.chunker.split(transcript)
         if not chunks:
+            error_result["summary"] = "❌ متنی برای خلاصه‌سازی یافت نشد (ویدیو زیرنویس ندارد)."
+            return error_result
 
-            return {
-
-                "overview": "متنی برای خلاصه‌سازی وجود ندارد.",
-
-                "key_points": [],
-
-                "important_terms": [],
-
-                "tools": [],
-
-                "resources": [],
-
-                "final_takeaway": ""
-
-            }
-
-
-
+        style_instruction = self._get_style_instruction(summary_type)
         partial_summaries = []
 
-
-
         for index, chunk in enumerate(chunks):
-
-
-            logger.info(
-
-                f"Summarizing chunk {index + 1}/{len(chunks)}"
-
-            )
-
-
+            logger.info(f"Summarizing chunk {index + 1}/{len(chunks)}")
+            
             try:
-
-
                 summary = self.client.summarize_json(
-
-
-                    system_prompt="""
-
-You are a professional educational YouTube summarizer.
-
-Analyze ONLY the provided transcript section.
-
-Do not invent information.
-
-Return ONLY valid JSON.
-
-Format:
-
-{
-"summary":"",
-"key_points":[],
-"important_terms":[],
-"tools":[],
-"resources":[]
-}
-
+                    system_prompt=f"""
+You are a YouTube summarizer.
+{style_instruction}
+Extract info from the transcript section.
+Return ONLY valid JSON with these exact keys:
+"summary": "The summary of this section based on the style",
+"key_points": ["list of key points"],
+"terms": ["list of technical terms or jargon"]
+Do NOT use "overview". Use "summary".
 """,
-
-
                     user_prompt=f"""
-
-Language:
-
-{language}
-
-
-Summary style:
-
-{summary_type}
-
+Language: {language}
 
 Transcript section:
-
 {chunk}
-
 """
-
                 )
 
-
-
-                logger.info(
-
-                    f"Chunk {index + 1} result: {summary}"
-
-                )
-
-
-
-                if summary:
-
-                    partial_summaries.append(
-                        summary
-                    )
-
-                else:
-
-                    logger.warning(
-
-                        f"Chunk {index + 1} returned empty result"
-
-                    )
-
-
+                if summary and not summary.get("error"):
+                    partial_summaries.append(summary)
+                elif summary and summary.get("error"):
+                    partial_summaries.append({"summary": summary.get("raw", "")})
 
             except Exception as e:
-
-
-                logger.exception(
-
-                    f"Chunk {index + 1} failed: {e}"
-
-                )
-
-
-
-                continue
-
-
-
-
-
-        # ==========================
-        # CHECK MAP RESULT
-        # ==========================
-
+                error_msg = str(e)
+                logger.exception(f"Chunk {index + 1} failed: {error_msg}")
+                error_result["summary"] = f"❌ خطا در ارتباط با هوش مصنوعی:\n`{error_msg}`"
+                return error_result
 
         if not partial_summaries:
-
-
-            return {
-
-                "overview": "AI نتوانست بخش‌های ویدیو را خلاصه کند.",
-
-                "key_points": [],
-
-                "important_terms": [],
-
-                "tools": [],
-
-                "resources": [],
-
-                "final_takeaway": ""
-
-            }
-
-
-
-
-
-        # ==========================
-        # PREPARE REDUCE INPUT
-        # ==========================
-
+            error_result["summary"] = "❌ هوش مصنوعی نتوانست هیچ بخشی را تحلیل کند."
+            return error_result
 
         combined = "\n\n".join(
-
             [
-
-                f"""
-SECTION {i + 1}
-
-{json.dumps(
-    item,
-    ensure_ascii=False
-)}
-
-"""
-
+                f"SECTION {i + 1}\n{json.dumps(item, ensure_ascii=False)}"
                 for i, item in enumerate(partial_summaries)
-
             ]
-
         )
-
-
-
-
-
-        # ==========================
-        # REDUCE PHASE
-        # ==========================
-
 
         try:
-
-
             final_result = self.client.summarize_json(
-
-
-
-                system_prompt="""
-
-You are an expert educational content editor.
-
-Combine the summaries into one complete educational summary.
-
-Rules:
-
-- Use only provided information.
-- Do not invent facts.
-- Return ONLY valid JSON.
-
+                system_prompt=f"""
+You are an expert YouTube video summarizer.
+{style_instruction}
+Combine the sections into ONE final summary.
+You MUST return a valid JSON object with EXACTLY these keys:
+"summary", "key_points", "terms", "conclusion".
+Do NOT leave the "summary" field empty.
+Do NOT leave the "conclusion" field empty.
 """,
-
-
-
                 user_prompt=f"""
+Language: {language}
 
-Language:
-
-{language}
-
-
-Summary type:
-
-{summary_type}
-
-
-
-Required JSON:
-
+Required JSON Format:
 {{
-"overview":"",
-"key_points":[],
-"important_terms":[],
-"tools":[],
-"resources":[],
-"final_takeaway":""
+"summary": "Write the main summary based on the requested style",
+"key_points": ["List of the key points based on the requested style"],
+"terms": ["List of terms based on the requested style"],
+"conclusion": "Write the conclusion based on the requested style"
 }}
 
-
-
 Input summaries:
-
 {combined}
-
 """
-
             )
 
+            if not final_result or final_result.get("error"):
+                raw_fallback = final_result.get("raw", "") if final_result else ""
+                if raw_fallback:
+                    error_result["summary"] = raw_fallback
+                    return error_result
+                    
+                raise Exception("Reduce phase returned empty or error.")
 
+            parsed = self.parser.parse(final_result)
+            
+            if not parsed or not parsed.get("summary"):
+                raise Exception("Parser returned empty summary.")
 
-            logger.info(
-
-                f"FINAL AI RESULT: {final_result}"
-
-            )
-
-
+            return {
+                "summary": parsed.get("summary", ""),
+                "key_points": parsed.get("key_points", []),
+                "terms": parsed.get("terms", []),
+                "conclusion": parsed.get("conclusion", "")
+            }
 
         except Exception as e:
-
-
-            logger.exception(
-
-                f"Reduce failed: {e}"
-
-            )
-
-
-            return {
-
-                "overview": "خطا در تولید خلاصه نهایی.",
-
-                "key_points": [],
-
-                "important_terms": [],
-
-                "tools": [],
-
-                "resources": [],
-
-                "final_takeaway": ""
-
-            }
-
-
-
-
-
-        # ==========================
-        # PARSE RESULT
-        # ==========================
-
-
-        if not final_result:
-
-
-            return {
-
-                "overview": "خروجی AI خالی بود.",
-
-                "key_points": [],
-
-                "important_terms": [],
-
-                "tools": [],
-
-                "resources": [],
-
-                "final_takeaway": ""
-
-            }
-
-
-
-
-        parsed = self.parser.parse(
-
-            final_result
-
-        )
-
-
-
-        if not parsed:
-
-
-            logger.error(
-
-                "Parser returned empty result"
-
-            )
-
-
-            return {
-
-                "overview": "خلاصه تولید نشد.",
-
-                "key_points": [],
-
-                "important_terms": [],
-
-                "tools": [],
-
-                "resources": [],
-
-                "final_takeaway": ""
-
-            }
-
-
-
-        return parsed
+            error_msg = str(e)
+            logger.exception(f"Reduce failed: {error_msg}")
+            fallback_text = "\n\n".join([p.get("summary", "") for p in partial_summaries if p.get("summary")])
+            if fallback_text:
+                error_result["summary"] = fallback_text
+            else:
+                error_result["summary"] = f"❌ خطا در تولید خلاصه نهایی:\n`{error_msg}`"
+            return error_result
