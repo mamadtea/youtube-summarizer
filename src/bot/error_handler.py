@@ -9,12 +9,7 @@ logger = logging.getLogger("youtube_summarizer")
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     error = context.error
-
-    user_info = "Unknown user"
-    if isinstance(update, Update) and update.effective_user:
-        user_info = f"User {update.effective_user.id} ({update.effective_user.first_name})"
-    
-    logger.error(f"Exception while handling an update for {user_info}:", exc_info=error)
+    logger.error("Exception while handling an update:", exc_info=error)
 
     if isinstance(error, TimedOut) or isinstance(error, NetworkError):
         text = "⏳ خطای ارتباط با سرورهای تلگرام. لطفاً دوباره تلاش کنید."

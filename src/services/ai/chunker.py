@@ -1,74 +1,18 @@
 class TranscriptChunker:
-    """
-    Splits long transcripts into smaller pieces.
-    """
-
-    def __init__(
-        self,
-        chunk_size=2500,
-        overlap=200
-    ):
-
-        self.chunk_size = chunk_size
-        self.overlap = overlap
-
-
-
-    def split(
-        self,
-        text: str
-    ) -> list:
-
-
-        if not text:
-
+    def split(self, text: str, chunk_size: int = 2800) -> list:
+        if not text:   
             return []
-
-
-
+        if len(text) <= chunk_size:
+            return [text]
+        
         chunks = []
-
-        start = 0
-
-        text_length = len(text)
-
-
-
-        while start < text_length:
-
-
-            end = min(
-
-                start + self.chunk_size,
-
-                text_length
-
-            )
-
-
-
-            chunk = text[start:end]
-
-
-
-            chunks.append(
-
-                chunk
-
-            )
-
-
-
-            # رسیدن به آخر متن
-
-            if end >= text_length:
-
+        while text:
+            if len(text) <= chunk_size:
+                chunks.append(text)
                 break
-
-
-
-            start = end - self.overlap
-
-
-
+            split_at = text.rfind(' ', 0, chunk_size)
+            if split_at == -1: 
+                split_at = chunk_size
+            chunks.append(text[:split_at])
+            text = text[split_at:].strip()
         return chunks

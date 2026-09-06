@@ -1,15 +1,10 @@
 from typing import Dict, Any
 
-
 def format_summary(summary: Dict[str, Any]) -> str:
-    """Formats the raw summary dictionary into a readable Telegram message."""
-    
     if isinstance(summary, str):
-        return f"🎬 خلاصه ویدیو\n\n━━━━━━━━━━━━━━\n\n{summary}"
+        return f"🎬 خلاصه\n\n━━━━━━━━━━━━━━\n\n{summary}"
 
-    text = "🎬 خلاصه ویدیو\n\n"
-    text += "━━━━━━━━━━━━━━\n\n"
-    
+    text = "🎬 خلاصه\n\n━━━━━━━━━━━━━━\n\n"
     text += summary.get("summary", "")
     
     key_points = summary.get("key_points", [])
