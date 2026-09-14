@@ -1,3 +1,4 @@
+
 import json
 import logging
 
@@ -8,73 +9,292 @@ logger = logging.getLogger("youtube_summarizer")
 
 
 class MapReduceSummarizer:
-    def __init__(self):
+    def __init__(self) -> None:
         self.client = OpenRouterClient()
         self.parser = SummaryParser()
 
-    def _get_style_instruction(self, summary_type: str) -> str:
+    def _get_style_instruction(
+        self,
+        summary_type: str,
+    ) -> str:
         if summary_type == "brief":
-            return "STYLE: BRIEF - Write 1-2 short paragraphs. Only 2-3 CRITICAL key points. Keep terms and conclusion very brief."
-        elif summary_type == "educational":
-            return 'STYLE: EDUCATIONAL - Structure like a lesson. Explain concepts for beginners. In "terms", include technical words and explain them. In "conclusion", summarize what the user should have learned.'
-        return "STYLE: COMPLETE - Comprehensive, detailed, thorough summary. List ALL important key points. Provide deep final conclusion."
+            return (
+                "STYLE: BRIEF. "
+                "Write a short summary in 1-2 paragraphs. "
+                "Provide only 3 critical key points. "
+                "Keep terms and conclusion short."
+            )
+
+        if summary_type == "educational":
+            return (
+                "STYLE: EDUCATIONAL. "
+                "Explain the important concepts clearly for beginners. "
+                "Use simple language. "
+                "In 'terms', include important technical terms. "
+                "In 'conclusion', explain what the user should learn."
+            )
+
+        return (
+            "STYLE: COMPLETE. "
+            "Write a detailed but concise summary. "
+            "Include the most important information. "
+            "Avoid unnecessary repetition."
+        )
+
+    def _split_transcript(
+        self,
+        transcript: str,
+    ) -> list[str]:
+        """
+        Split transcript into manageable sections.
+
+        The current implementation processes the transcript
+        as one section. A dedicated chunker can be introduced
+        later without changing the public summarize() API.
+        """
+
+        text = transcript.strip()
+
+        if not text:
+            return []
+
+        return [text]
+
+    def _normalize_partial_summary(
+        self,
+        result: dict,
+    ) -> dict:
+        """Normalize a partial AI response."""
+
+        summary = result.get(
+            "summary",
+            "",
+        )
+
+        key_points = result.get(
+            "key_points",
+            [],
+        )
+
+        terms = result.get(
+            "terms",
+            [],
+        )
+
+        conclusion = result.get(
+            "conclusion",
+            "",
+        )
+
+        if not isinstance(summary, str):
+            summary = str(summary)
+
+        if not isinstance(key_points, list):
+            key_points = []
+
+        if not isinstance(terms, list):
+            terms = []
+
+        if not isinstance(conclusion, str):
+            conclusion = str(conclusion)
+
+        if not summary.strip():
+            raise ValueError(
+                "AI partial summary is empty."
+            )
+
+        return {
+            "summary": summary.strip(),
+            "key_points": key_points,
+            "terms": terms,
+            "conclusion": conclusion.strip(),
+        }
 
     def summarize(
         self,
         transcript: str,
         language: str = "Persian",
         summary_type: str = "complete",
-        context_hint: str = "a YouTube video transcript"
+        context_hint: str = "a YouTube video transcript",
     ) -> dict:
-
-        error_result = {"summary": "", "key_points": [], "terms": [], "conclusion": ""}
-
-        chunks = self.chunker.split(transcript) if hasattr(self, 'chunker') else [transcript]
-        if not chunks:
-            error_result["summary"] = "❌ متنی برای خلاصه‌سازی یافت نشد."
-            return error_result
-
-        style_instruction = self._get_style_instruction(summary_type)
-        partial_summaries = []
-
-        for index, chunk in enumerate(chunks):
-            try:
-                summary = self.client.summarize_json(
-                    system_prompt=f"You are a content summarizer. You are reading {context_hint}. {style_instruction} Return ONLY valid JSON with: 'summary', 'key_points', 'terms', 'conclusion'",
-                    user_prompt=f"Language: {language}\n\nText section:\n{chunk}"
-                )
-                if summary and not summary.get("error"):
-                    partial_summaries.append(summary)
-                elif summary and summary.get("error"):
-                    partial_summaries.append({"summary": summary.get("raw", "")})
-            except Exception as e:
-                error_result["summary"] = f"❌ خطا در هوش مصنوعی:\n`{str(e)}`"
-                return error_result
-
-        if not partial_summaries:
-            error_result["summary"] = "❌ تحلیل انجام نشد."
-            return error_result
-
-        combined = "\n\n".join([f"SECTION {i + 1}\n{json.dumps(item, ensure_ascii=False)}" for i, item in enumerate(partial_summaries)])
-
-        try:
-            final_result = self.client.summarize_json(
-                system_prompt=f"You are an expert summarizer. You are summarizing {context_hint}. {style_instruction} Combine sections. Return ONLY valid JSON with: 'summary', 'key_points', 'terms', 'conclusion'",
-                user_prompt=f"Language: {language}\n\nInput summaries:\n{combined}"
+        if not transcript or not transcript.strip():
+            raise ValueError(
+                "Transcript is empty."
             )
 
-            if not final_result or final_result.get("error"):
-                if final_result and final_result.get("raw"):
-                    error_result["summary"] = final_result["raw"]
-                    return error_result
-                raise Exception("Reduce phase empty")
+        style_instruction = self._get_style_instruction(
+            summary_type
+        )
 
-            parsed = self.parser.parse(final_result)
-            if not parsed or not parsed.get("summary"):
-                raise Exception("Parser empty")
+        chunks = self._split_transcript(
+            transcript
+        )
 
-            return {"summary": parsed.get("summary", ""), "key_points": parsed.get("key_points", []), "terms": parsed.get("terms", []), "conclusion": parsed.get("conclusion", "")}
-        except Exception as e:
-            fallback_text = "\n\n".join([p.get("summary", "") for p in partial_summaries if p.get("summary")])
-            error_result["summary"] = fallback_text if fallback_text else f"❌ خطا:\n`{str(e)}`"
-            return error_result
+        if not chunks:
+            raise ValueError(
+                "No transcript chunks were created."
+            )
+
+        partial_summaries: list[dict] = []
+
+        # Map phase
+        for index, chunk in enumerate(
+            chunks,
+            start=1,
+        ):
+            logger.info(
+                "Processing transcript chunk %s/%s",
+                index,
+                len(chunks),
+            )
+
+            partial_result = self.client.summarize_json(
+                system_prompt=(
+                    "You are a content summarizer. "
+                    f"You are reading {context_hint}. "
+                    f"{style_instruction} "
+                    "Return ONLY valid JSON. "
+                    "Do not use Markdown. "
+                    "Do not use ```json or ``` fences. "
+                    "The JSON object must contain exactly these fields: "
+                    "'summary', 'key_points', 'terms', 'conclusion'. "
+                    "Keep the response concise enough to fit the output limit."
+                ),
+                user_prompt=(
+                    f"Language: {language}\n\n"
+                    "Summarize the following section:\n\n"
+                    f"{chunk}"
+                ),
+            )
+
+            if not isinstance(partial_result, dict):
+                raise TypeError(
+                    "AI partial response must be a JSON object."
+                )
+
+            normalized = self._normalize_partial_summary(
+                partial_result
+            )
+
+            partial_summaries.append(
+                normalized
+            )
+
+        if not partial_summaries:
+            raise RuntimeError(
+                "No partial summaries were generated."
+            )
+
+        # Reduce phase
+        sections = []
+
+        for index, item in enumerate(
+            partial_summaries,
+            start=1,
+        ):
+            sections.append(
+                
+                    f"SECTION {index}\n"
+                    f"Summary: {item['summary']}\n"
+                    f"Key points: "
+                    f"{json.dumps(item['key_points'], ensure_ascii=False)}\n"
+                    f"Terms: "
+                    f"{json.dumps(item['terms'], ensure_ascii=False)}\n"
+                    f"Conclusion: {item['conclusion']}"
+                
+            )
+
+        combined = "\n\n".join(
+            sections
+        )
+
+        logger.info(
+            "Starting reduce phase with %s sections",
+            len(partial_summaries),
+        )
+
+        final_result = self.client.summarize_json(
+            system_prompt=(
+                "You are an expert summarizer. "
+                f"You are summarizing {context_hint}. "
+                f"{style_instruction} "
+                "Combine the provided sections into one final answer. "
+                "Remove duplicated information. "
+                "Keep only the most important points. "
+                "Do not invent information. "
+                "Return ONLY valid JSON. "
+                "Do not use Markdown. "
+                "Do not use ```json or ``` fences. "
+                "The JSON object must contain exactly these fields: "
+                "'summary', 'key_points', 'terms', 'conclusion'. "
+                "Keep the output concise so the JSON is always complete."
+            ),
+            user_prompt=(
+                f"Language: {language}\n\n"
+                "Combine these section summaries:\n\n"
+                f"{combined}"
+            ),
+        )
+
+        if not isinstance(final_result, dict):
+            raise TypeError(
+                "Final AI response must be a JSON object."
+            )
+
+        parsed = self.parser.parse(
+            final_result
+        )
+
+        if not parsed:
+            raise ValueError(
+                "Summary parser returned an empty result."
+            )
+
+        summary_text = parsed.get(
+            "summary",
+            "",
+        )
+
+        if not isinstance(summary_text, str):
+            summary_text = str(summary_text)
+
+        if not summary_text.strip():
+            raise ValueError(
+                "Final summary is empty."
+            )
+
+        key_points = parsed.get(
+            "key_points",
+            [],
+        )
+
+        terms = parsed.get(
+            "terms",
+            [],
+        )
+
+        conclusion = parsed.get(
+            "conclusion",
+            "",
+        )
+
+        if not isinstance(key_points, list):
+            key_points = []
+
+        if not isinstance(terms, list):
+            terms = []
+
+        if not isinstance(conclusion, str):
+            conclusion = str(conclusion)
+
+        logger.info(
+            "Map-reduce summarization completed successfully"
+        )
+
+        return {
+            "summary": summary_text.strip(),
+            "key_points": key_points,
+            "terms": terms,
+            "conclusion": conclusion.strip(),
+        }
+

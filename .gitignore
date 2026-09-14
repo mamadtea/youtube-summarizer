@@ -16,3 +16,5 @@ temp/
 
 # Environment variables (توکن ربات و API_KEY)
 .env
+
+bot.log

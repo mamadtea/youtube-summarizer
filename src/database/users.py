@@ -1,71 +1,296 @@
-import os
+
 import logging
-from typing import Dict, Any, Optional
+import os
+import typing
+from datetime import datetime, timezone
+
 import aiosqlite
 
 logger = logging.getLogger("youtube_summarizer")
+
 DB_PATH = "data/bot.db"
 
 
 class UserSettings:
     def __init__(self, db_path: str = DB_PATH):
         self.db_path = db_path
-        self._db: Optional[aiosqlite.Connection] = None
+        self._db: aiosqlite.Connection | None = None
 
     async def init(self) -> None:
-        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+        os.makedirs(
+            os.path.dirname(self.db_path),
+            exist_ok=True,
+        )
+
         self._db = await aiosqlite.connect(self.db_path)
-        await self._db.execute("""
+
+        await self._db.execute(
+            """
             CREATE TABLE IF NOT EXISTS users (
                 user_id INTEGER PRIMARY KEY,
                 first_name TEXT DEFAULT '',
                 language TEXT DEFAULT 'Persian',
                 summary_type TEXT DEFAULT 'complete',
-                requests INTEGER DEFAULT 0
+                requests INTEGER DEFAULT 0,
+                free_usage_date TEXT
             )
-        """)
+            """
+        )
+
+        try:
+            await self._db.execute(
+                """
+                ALTER TABLE users
+                ADD COLUMN free_usage_date TEXT
+                """
+            )
+        except aiosqlite.OperationalError:
+            pass
+
         await self._db.commit()
 
     async def close(self) -> None:
-        if self._db: 
+        if self._db:
             await self._db.close()
+            self._db = None
 
-    async def create_user(self, user_id: int, first_name: str = "") -> None:
-        await self._db.execute("INSERT OR IGNORE INTO users (user_id, first_name) VALUES (?, ?)", (user_id, first_name))
+    async def create_user(
+        self,
+        user_id: int,
+        first_name: str = "",
+    ) -> None:
+        await self._db.execute(
+            """
+            INSERT OR IGNORE INTO users (
+                user_id,
+                first_name
+            )
+            VALUES (?, ?)
+            """,
+            (user_id, first_name),
+        )
         await self._db.commit()
 
-    async def get_user(self, user_id: int) -> Dict[str, Any]:
-        async with self._db.execute("SELECT language, summary_type, requests FROM users WHERE user_id = ?", (user_id,)) as cursor:
+    async def get_user(
+        self,
+        user_id: int,
+    ) -> dict[str, typing.Any]:
+        async with self._db.execute(
+            """
+            SELECT
+                language,
+                summary_type,
+                requests,
+                free_usage_date
+            FROM users
+            WHERE user_id = ?
+            """,
+            (user_id,),
+        ) as cursor:
             result = await cursor.fetchone()
+
         if result is None:
             await self.create_user(user_id)
-            return {"language": "Persian", "summary_type": "complete", "requests": 0}
-        return {"language": result[0], "summary_type": result[1], "requests": result[2]}
 
-    async def update_language(self, user_id: int, language: str) -> None:
+            return {
+                "language": "Persian",
+                "summary_type": "complete",
+                "requests": 0,
+                "free_usage_date": None,
+            }
+
+        return {
+            "language": result[0],
+            "summary_type": result[1],
+            "requests": result[2],
+            "free_usage_date": result[3],
+        }
+
+    async def update_language(
+        self,
+        user_id: int,
+        language: str,
+    ) -> None:
         await self.create_user(user_id)
-        await self._db.execute("UPDATE users SET language = ? WHERE user_id = ?", (language, user_id))
+
+        await self._db.execute(
+            """
+            UPDATE users
+            SET language = ?
+            WHERE user_id = ?
+            """,
+            (language, user_id),
+        )
         await self._db.commit()
 
-    async def update_summary_type(self, user_id: int, summary_type: str) -> None:
+    async def update_summary_type(
+        self,
+        user_id: int,
+        summary_type: str,
+    ) -> None:
         await self.create_user(user_id)
-        await self._db.execute("UPDATE users SET summary_type = ? WHERE user_id = ?", (summary_type, user_id))
+
+        await self._db.execute(
+            """
+            UPDATE users
+            SET summary_type = ?
+            WHERE user_id = ?
+            """,
+            (summary_type, user_id),
+        )
         await self._db.commit()
 
-    async def increase_requests(self, user_id: int) -> None:
+    async def increase_requests(
+        self,
+        user_id: int,
+    ) -> None:
         await self.create_user(user_id)
-        await self._db.execute("UPDATE users SET requests = requests + 1 WHERE user_id = ?", (user_id,))
+
+        await self._db.execute(
+            """
+            UPDATE users
+            SET requests = requests + 1
+            WHERE user_id = ?
+            """,
+            (user_id,),
+        )
         await self._db.commit()
 
-    async def create_if_not_exists(self, user_id: int, first_name: str = "") -> None: await self.create_user(user_id, first_name)
-    async def set_language(self, user_id: int, language: str) -> None: await self.update_language(user_id, language)
-    async def set_summary_type(self, user_id: int, summary_type: str) -> None: await self.update_summary_type(user_id, summary_type)
+    async def has_free_today(
+        self,
+        user_id: int,
+    ) -> bool:
+        user = await self.get_user(user_id)
+
+        today = datetime.now(
+            timezone.utc
+        ).date().isoformat()
+
+        return user.get("free_usage_date") != today
+
+    async def consume_free_today(
+        self,
+        user_id: int,
+    ) -> bool:
+        await self.create_user(user_id)
+
+        today = datetime.now(
+            timezone.utc
+        ).date().isoformat()
+
+        cursor = await self._db.execute(
+            """
+            UPDATE users
+            SET free_usage_date = ?
+            WHERE user_id = ?
+              AND (
+                  free_usage_date IS NULL
+                  OR free_usage_date != ?
+              )
+            """,
+            (
+                today,
+                user_id,
+                today,
+            ),
+        )
+
+        await self._db.commit()
+
+        return cursor.rowcount == 1
+
+    async def create_if_not_exists(
+        self,
+        user_id: int,
+        first_name: str = "",
+    ) -> None:
+        await self.create_user(
+            user_id,
+            first_name,
+        )
+
+    async def set_language(
+        self,
+        user_id: int,
+        language: str,
+    ) -> None:
+        await self.update_language(
+            user_id,
+            language,
+        )
+
+    async def set_summary_type(
+        self,
+        user_id: int,
+        summary_type: str,
+    ) -> None:
+        await self.update_summary_type(
+            user_id,
+            summary_type,
+        )
+
 
 _users = UserSettings()
 
-async def init() -> None: await _users.init()
-async def create_if_not_exists(user_id: int, first_name: str = "") -> None: await _users.create_if_not_exists(user_id, first_name)
-async def get_user(user_id: int) -> Dict[str, Any]: return await _users.get_user(user_id)
-async def increase_requests(user_id: int) -> None: await _users.increase_requests(user_id)
-async def set_language(user_id: int, language: str) -> None: await _users.set_language(user_id, language)
-async def set_summary_type(user_id: int, summary_type: str) -> None: await _users.set_summary_type(user_id, summary_type)
+
+async def init() -> None:
+    await _users.init()
+
+
+async def close() -> None:
+    await _users.close()
+
+
+async def create_if_not_exists(
+    user_id: int,
+    first_name: str = "",
+) -> None:
+    await _users.create_if_not_exists(
+        user_id,
+        first_name,
+    )
+
+
+async def get_user(
+    user_id: int,
+) -> dict[str, typing.Any]:
+    return await _users.get_user(user_id)
+
+
+async def increase_requests(
+    user_id: int,
+) -> None:
+    await _users.increase_requests(user_id)
+
+
+async def has_free_today(
+    user_id: int,
+) -> bool:
+    return await _users.has_free_today(user_id)
+
+
+async def consume_free_today(
+    user_id: int,
+) -> bool:
+    return await _users.consume_free_today(user_id)
+
+
+async def set_language(
+    user_id: int,
+    language: str,
+) -> None:
+    await _users.set_language(
+        user_id,
+        language,
+    )
+
+
+async def set_summary_type(
+    user_id: int,
+    summary_type: str,
+) -> None:
+    await _users.set_summary_type(
+        user_id,
+        summary_type,
+    )
+

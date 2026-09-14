@@ -1,8 +1,8 @@
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from src.database import users
 from src.bot.keyboards import settings_keyboard
+from src.database import users
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -25,7 +25,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/settings - تنظیمات\n"
         "/history - تاریخچه\n"
         "/me - پروفایل\n"
-        "/help - راهنما"
+        "/help - راهنما\n"
+        "/plans - اشتراک ها "
     )
 
     await update.message.reply_text(text, reply_markup=settings_keyboard())
